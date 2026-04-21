@@ -955,15 +955,93 @@ with tab3:
             else:
                 _OTHER_LABEL = "Andere (Freitext) …"
 
-                # Header row
-                st.markdown("""
-<div style="display:grid;grid-template-columns:110px 130px 1fr 220px;gap:0;
-            border-bottom:2px solid var(--border);padding-bottom:4px;margin-bottom:2px;">
-  <span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);">Datum</span>
-  <span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);">Veranstaltung</span>
-  <span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);">Thema</span>
-  <span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);">Verantwortlich</span>
-</div>""", unsafe_allow_html=True)
+                # ── Helper: apply pending edits → schedule DataFrame ──────────
+                def _apply_edits_to_sched(base_sc, edits):
+                    edited = base_sc.copy()
+                    for eidx, eval_ in edits.items():
+                        if isinstance(eidx, str) and "_" in str(eidx):
+                            try:
+                                parts_ = str(eidx).rsplit("_", 1)
+                                bidx, slot_ = int(parts_[0]), int(parts_[1])
+                                if bidx in edited.index:
+                                    cur = str(edited.at[bidx, "responsible"] or "")
+                                    cps = [p.strip() for p in cur.split("/")]
+                                    while len(cps) <= slot_:
+                                        cps.append("— TBD —")
+                                    cps[slot_] = eval_
+                                    edited.at[bidx, "responsible"] = " / ".join(cps)
+                            except (ValueError, KeyError):
+                                pass
+                        elif eidx in edited.index:
+                            edited.at[eidx, "responsible"] = eval_
+                    return edited
+
+                def _count_pending(base_sc, edits):
+                    n = 0
+                    for eidx, eval_ in edits.items():
+                        try:
+                            if isinstance(eidx, str) and "_" in str(eidx):
+                                parts_ = str(eidx).rsplit("_", 1)
+                                bidx, slot_ = int(parts_[0]), int(parts_[1])
+                                if bidx in base_sc.index:
+                                    cur = str(base_sc.at[bidx, "responsible"] or "")
+                                    cps = [p.strip() for p in cur.split("/")]
+                                    orig = cps[slot_] if slot_ < len(cps) else "— TBD —"
+                                    if orig.strip() != eval_.strip():
+                                        n += 1
+                            elif eidx in base_sc.index:
+                                orig = str(base_sc.at[eidx, "responsible"] or "")
+                                if orig.strip() != eval_.strip():
+                                    n += 1
+                        except (ValueError, KeyError):
+                            pass
+                    return n
+
+                # Pending edits (not yet committed to schedule)
+                _pending_key = f"_pending_edits_{confirm_month}"
+                if _pending_key not in st.session_state:
+                    st.session_state[_pending_key] = {}
+                _pending = st.session_state[_pending_key]
+
+                _base_sc   = st.session_state.get(f"confirm_schedule_{confirm_month}")
+                _n_pending = _count_pending(_base_sc, _pending)
+
+                # ── Plan aktualisieren button ─────────────────────────────────
+                _ua_col, _info_col = st.columns([2, 5])
+                with _ua_col:
+                    _update_clicked = st.button(
+                        "Plan aktualisieren",
+                        type="primary" if _n_pending > 0 else "secondary",
+                        disabled=(_n_pending == 0),
+                        key=f"update_plan_{confirm_month}",
+                        use_container_width=True,
+                    )
+                with _info_col:
+                    if _n_pending > 0:
+                        _banner(f"{_n_pending} Änderung(en) ausstehend — «Plan aktualisieren» klicken.", "warn")
+                    else:
+                        _banner("Keine ausstehenden Änderungen.", "info")
+
+                if _update_clicked and _n_pending > 0:
+                    _new_sc = _apply_edits_to_sched(_base_sc, _pending)
+                    st.session_state[f"confirm_schedule_{confirm_month}"] = _new_sc
+                    st.session_state[f"generated_{confirm_month}"]        = _new_sc
+                    st.session_state.pop("schedule_all", None)
+                    st.session_state.pop(f"notify_schedule_{confirm_month}", None)
+                    st.session_state.pop(f"word_file_{confirm_month}", None)
+                    st.session_state[_pending_key] = {}
+                    _banner("Plan aktualisiert.", "ok")
+                    st.rerun()
+
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+                # ── Table: Datum + Verantwortlich only ────────────────────────
+                _th1, _th2 = st.columns([1, 2])
+                with _th1:
+                    st.markdown("<p style='font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 3px'>Datum · Veranstaltung</p>", unsafe_allow_html=True)
+                with _th2:
+                    st.markdown("<p style='font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 3px'>Verantwortlich — Alternativ auswählen</p>", unsafe_allow_html=True)
+                st.markdown("<div style='height:1px;background:var(--border);margin-bottom:4px'></div>", unsafe_allow_html=True)
 
                 for _idx, _row in _sc_rel.iterrows():
                     _evt_type  = str(_row.get("event_type", ""))
@@ -972,127 +1050,77 @@ with tab3:
                     if not isinstance(_orig_name, str) or not _orig_name.strip():
                         _orig_name = "— TBD —"
 
-                    # For Journal_Club split into two slots
                     if _is_jc:
-                        _parts = [p.strip() for p in _orig_name.split("/")]
+                        _parts   = [p.strip() for p in _orig_name.split("/")]
                         _orig_p1 = _parts[0] if len(_parts) > 0 else "— TBD —"
                         _orig_p2 = _parts[1] if len(_parts) > 1 else "— TBD —"
-                        _cur_p1  = st.session_state[_edits_key].get(f"{_idx}_0", _orig_p1)
-                        _cur_p2  = st.session_state[_edits_key].get(f"{_idx}_1", _orig_p2)
+                        _pend_p1 = _pending.get(f"{_idx}_0", _orig_p1)
+                        _pend_p2 = _pending.get(f"{_idx}_1", _orig_p2)
+                        _row_changed = (_pend_p1 != _orig_p1 or _pend_p2 != _orig_p2)
                     else:
-                        _cur_p1 = st.session_state[_edits_key].get(_idx, _orig_name)
-                        _orig_p1 = _orig_name
+                        _orig_p1     = _orig_name
+                        _pend_p1     = _pending.get(_idx, _orig_name)
+                        _row_changed = (_pend_p1 != _orig_name)
 
-                    _date_str  = WEEKDAY_DE.get(_row["date"].strftime("%A"), "") + " " + _row["date"].strftime("%d.%m.")
-                    _time_str  = str(_row.get("time", ""))
-                    _evt_str   = _evt_type.replace("_", " ")
-                    _topic_str = str(_row.get("topic", ""))
+                    _date_str = WEEKDAY_DE.get(_row["date"].strftime("%A"), "") + " " + _row["date"].strftime("%d.%m.")
+                    _time_str = str(_row.get("time", ""))
+                    _evt_str  = _evt_type.replace("_", " ")
+                    _accent   = "border-left:3px solid var(--teal);" if _row_changed else "border-left:3px solid transparent;"
 
-                    # Detect if this row has been changed
-                    if _is_jc:
-                        _is_changed = (
-                            st.session_state[_edits_key].get(f"{_idx}_0", _orig_p1) != _orig_p1 or
-                            st.session_state[_edits_key].get(f"{_idx}_1", _orig_p2) != _orig_p2
-                        )
-                    else:
-                        _is_changed = st.session_state[_edits_key].get(_idx, _orig_p1) != _orig_p1
-
-                    _row_bg = "background:#f0faf6;" if _is_changed else ""
-
-                    # Each row: left info panel (3 cols via HTML) + right dropdown column
-                    _left_col, _right_col = st.columns([3, 2])
-                    with _left_col:
+                    _cl, _cr = st.columns([1, 2])
+                    with _cl:
                         st.markdown(
-                            f"<div style='display:grid;grid-template-columns:110px 130px 1fr;"
-                            f"align-items:center;padding:7px 6px 7px 0;{_row_bg}'>"
-                            f"<div><span style='font-size:12px;font-weight:600;color:var(--navy)'>{_date_str}</span>"
-                            f"<br><span style='font-size:11px;color:var(--muted)'>{_time_str}</span></div>"
-                            f"<div style='font-size:12px;color:var(--teal);font-weight:600'>{_evt_str}</div>"
-                            f"<div style='font-size:12px;color:var(--navy);padding-right:8px'>{_topic_str}</div>"
+                            f"<div style='{_accent}padding:6px 0 4px 6px'>"
+                            f"<span style='font-size:12px;font-weight:600;color:var(--navy)'>{_date_str}</span> "
+                            f"<span style='font-size:11px;color:var(--muted)'>{_time_str}</span><br>"
+                            f"<span style='font-size:11px;color:var(--teal)'>{_evt_str}</span>"
                             f"</div>",
                             unsafe_allow_html=True,
                         )
-                    with _right_col:
+                    with _cr:
                         if _is_jc:
-                            # --- Person 1 (Intermediate/OA slot) ---
-                            _alts1, _nmap1 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _cur_p1)
-                            _opts1 = [_cur_p1] + [o for o in _alts1 if _nmap1.get(o, o) != _cur_p1] + [_OTHER_LABEL]
-                            st.markdown("<p style='font-size:10px;color:var(--muted);margin:6px 0 1px'>OA / Intermediate</p>", unsafe_allow_html=True)
-                            _sel1 = st.selectbox("OA / Intermediate", _opts1, index=0, label_visibility="collapsed",
+                            _alts1, _nmap1 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _pend_p1)
+                            _opts1 = [_pend_p1] + [o for o in _alts1 if _nmap1.get(o, o) != _pend_p1] + [_OTHER_LABEL]
+                            st.markdown("<span style='font-size:10px;color:var(--muted)'>OA / Intermediate</span>", unsafe_allow_html=True)
+                            _sel1 = st.selectbox("OA", _opts1, index=0, label_visibility="collapsed",
                                                  key=f"sel_{confirm_month}_{_idx}_0")
                             if _sel1 == _OTHER_LABEL:
                                 _free1 = st.text_input("Name", key=f"free_{confirm_month}_{_idx}_0",
                                                         placeholder="V. Nachname", label_visibility="collapsed")
                                 if _free1.strip():
-                                    st.session_state[_edits_key][f"{_idx}_0"] = _free1.strip()
+                                    _pending[f"{_idx}_0"] = _free1.strip()
                             else:
-                                st.session_state[_edits_key][f"{_idx}_0"] = _nmap1.get(_sel1, _sel1)
+                                _pending[f"{_idx}_0"] = _nmap1.get(_sel1, _sel1)
 
-                            # --- Person 2 (AA slot) ---
-                            _alts2, _nmap2 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=1), _cur_p2)
-                            _opts2 = [_cur_p2] + [o for o in _alts2 if _nmap2.get(o, o) != _cur_p2] + [_OTHER_LABEL]
-                            st.markdown("<p style='font-size:10px;color:var(--muted);margin:2px 0 1px'>AA</p>", unsafe_allow_html=True)
+                            _alts2, _nmap2 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=1), _pend_p2)
+                            _opts2 = [_pend_p2] + [o for o in _alts2 if _nmap2.get(o, o) != _pend_p2] + [_OTHER_LABEL]
+                            st.markdown("<span style='font-size:10px;color:var(--muted)'>AA</span>", unsafe_allow_html=True)
                             _sel2 = st.selectbox("AA", _opts2, index=0, label_visibility="collapsed",
                                                  key=f"sel_{confirm_month}_{_idx}_1")
                             if _sel2 == _OTHER_LABEL:
                                 _free2 = st.text_input("Name", key=f"free_{confirm_month}_{_idx}_1",
                                                         placeholder="V. Nachname", label_visibility="collapsed")
                                 if _free2.strip():
-                                    st.session_state[_edits_key][f"{_idx}_1"] = _free2.strip()
+                                    _pending[f"{_idx}_1"] = _free2.strip()
                             else:
-                                st.session_state[_edits_key][f"{_idx}_1"] = _nmap2.get(_sel2, _sel2)
-
+                                _pending[f"{_idx}_1"] = _nmap2.get(_sel2, _sel2)
                         else:
-                            # --- Single person slot ---
-                            _alts, _nmap = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _cur_p1)
-                            _opts = [_cur_p1] + [o for o in _alts if _nmap.get(o, o) != _cur_p1] + [_OTHER_LABEL]
-                            st.markdown("<p style='font-size:10px;color:var(--muted);margin:6px 0 1px'>Verantwortlich</p>", unsafe_allow_html=True)
+                            _alts, _nmap = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _pend_p1)
+                            _opts = [_pend_p1] + [o for o in _alts if _nmap.get(o, o) != _pend_p1] + [_OTHER_LABEL]
+                            st.markdown("<span style='font-size:10px;color:var(--muted)'>Verantwortlich</span>", unsafe_allow_html=True)
                             _sel = st.selectbox("Verantwortlich", _opts, index=0, label_visibility="collapsed",
                                                 key=f"sel_{confirm_month}_{_idx}")
                             if _sel == _OTHER_LABEL:
                                 _free = st.text_input("Name", key=f"free_{confirm_month}_{_idx}",
                                                        placeholder="V. Nachname", label_visibility="collapsed")
                                 if _free.strip():
-                                    st.session_state[_edits_key][_idx] = _free.strip()
+                                    _pending[_idx] = _free.strip()
                             else:
-                                st.session_state[_edits_key][_idx] = _nmap.get(_sel, _sel)
+                                _pending[_idx] = _nmap.get(_sel, _sel)
 
-                    st.markdown("<div style='height:1px;background:var(--border);opacity:.4;margin:0'></div>", unsafe_allow_html=True)
+                    st.markdown("<div style='height:1px;background:var(--border);opacity:.35;margin:0'></div>", unsafe_allow_html=True)
 
-                # Apply edits back to sc
-                _sc_edited = st.session_state.get(f"confirm_schedule_{confirm_month}").copy()
-                for _edit_idx, _edit_val in st.session_state[_edits_key].items():
-                    # Journal Club slots: key is "idx_0" or "idx_1"
-                    if isinstance(_edit_idx, str) and "_" in str(_edit_idx):
-                        try:
-                            parts = str(_edit_idx).rsplit("_", 1)
-                            base_idx = int(parts[0])
-                            slot     = int(parts[1])
-                            if base_idx in _sc_edited.index:
-                                cur_resp = str(_sc_edited.at[base_idx, "responsible"] or "")
-                                cur_parts = [p.strip() for p in cur_resp.split("/")]
-                                while len(cur_parts) <= slot:
-                                    cur_parts.append("— TBD —")
-                                cur_parts[slot] = _edit_val
-                                _sc_edited.at[base_idx, "responsible"] = " / ".join(cur_parts)
-                        except (ValueError, KeyError):
-                            pass
-                    elif _edit_idx in _sc_edited.index:
-                        _sc_edited.at[_edit_idx, "responsible"] = _edit_val
-                st.session_state[f"confirm_schedule_{confirm_month}"] = _sc_edited
-                sc = _sc_edited
-
-                # Count actual changes
-                _actual_changes = 0
-                for _ix, _row in _sc_rel.iterrows():
-                    _orig = str(_row.get("responsible", "") or "")
-                    _new  = str(_sc_edited.at[_ix, "responsible"] if _ix in _sc_edited.index else _orig)
-                    if _orig.strip() != _new.strip():
-                        _actual_changes += 1
-                if _actual_changes > 0:
-                    _banner(f"{_actual_changes} Änderung(en) vorgemerkt — werden bei Bestätigung gespeichert.", "ok")
-                else:
-                    _banner("Keine Änderungen — Dropdown auswählen um Person zu ersetzen.", "info")
+                st.session_state[_pending_key] = _pending
 
         if sc is not None:
             st.markdown("<hr>", unsafe_allow_html=True)
