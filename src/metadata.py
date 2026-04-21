@@ -32,7 +32,7 @@ EVENT_METADATA = {
     
     "Mittwoch_Curriculum": {
         "room": "INO E218",
-        "prefix": "Mittwochscurriculum:"
+        "prefix": ""
     },
 
     "Journal_Club": {
