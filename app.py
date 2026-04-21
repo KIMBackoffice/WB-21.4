@@ -998,17 +998,21 @@ with tab3:
                             pass
                     return n
 
-                # Pending edits (not yet committed to schedule)
-                _pending_key = f"_pending_edits_{confirm_month}"
-                if _pending_key not in st.session_state:
-                    st.session_state[_pending_key] = {}
-                # Work on a fresh copy each rerun so writes are visible immediately
-                _pending = dict(st.session_state[_pending_key])
+                # Base schedule — what was last committed
                 _base_sc = st.session_state.get(f"confirm_schedule_{confirm_month}")
 
-                # ── nmap cache: maps full option label → clean display name ───
-                # Built during the row loop, used for name resolution
-                _nmap_cache = {}  # key f"{_idx}" or f"{_idx}_0/1" → nmap dict
+                # ── Helper: resolve current widget value → clean display name ─
+                def _resolve_sel(widget_key, nmap, orig):
+                    """
+                    Read the widget's current value directly from st.session_state.
+                    This is always up-to-date on the current rerun, unlike return
+                    values from st.selectbox which lag by one rerun in some flows.
+                    """
+                    raw = st.session_state.get(widget_key, orig)
+                    if raw == _OTHER_LABEL:
+                        free_key = widget_key.replace("sel_", "free_", 1)
+                        return st.session_state.get(free_key, "").strip() or orig
+                    return nmap.get(raw, raw)
 
                 # ── Table: Datum + Verantwortlich only ────────────────────────
                 _th1, _th2 = st.columns([1, 2])
@@ -1029,21 +1033,54 @@ with tab3:
                         _parts   = [p.strip() for p in _orig_name.split("/")]
                         _orig_p1 = _parts[0] if len(_parts) > 0 else "— TBD —"
                         _orig_p2 = _parts[1] if len(_parts) > 1 else "— TBD —"
-                        _pend_p1 = _pending.get(f"{_idx}_0", _orig_p1)
-                        _pend_p2 = _pending.get(f"{_idx}_1", _orig_p2)
-                        _row_changed = (_pend_p1 != _orig_p1 or _pend_p2 != _orig_p2)
                     else:
-                        _orig_p1     = _orig_name
-                        _pend_p1     = _pending.get(_idx, _orig_name)
-                        _row_changed = (_pend_p1 != _orig_name)
+                        _orig_p1 = _orig_name
 
                     _date_str = WEEKDAY_DE.get(_row["date"].strftime("%A"), "") + " " + _row["date"].strftime("%d.%m.")
                     _time_str = str(_row.get("time", ""))
                     _evt_str  = _evt_type.replace("_", " ")
-                    _accent   = "border-left:3px solid var(--teal);" if _row_changed else "border-left:3px solid transparent;"
 
                     _cl, _cr = st.columns([1, 2])
+                    with _cr:
+                        # ── Render dropdowns FIRST so widget keys exist in session_state ──
+                        if _is_jc:
+                            _alts1, _nmap1 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _orig_p1)
+                            _opts1 = [_orig_p1] + [o for o in _alts1 if _nmap1.get(o, o) != _orig_p1] + [_OTHER_LABEL]
+                            st.markdown("<span style='font-size:10px;color:var(--muted)'>OA / Intermediate</span>", unsafe_allow_html=True)
+                            st.selectbox("OA", _opts1, index=0, label_visibility="collapsed",
+                                         key=f"sel_{confirm_month}_{_idx}_0")
+                            if st.session_state.get(f"sel_{confirm_month}_{_idx}_0") == _OTHER_LABEL:
+                                st.text_input("Name", key=f"free_{confirm_month}_{_idx}_0",
+                                              placeholder="V. Nachname", label_visibility="collapsed")
+
+                            _alts2, _nmap2 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=1), _orig_p2)
+                            _opts2 = [_orig_p2] + [o for o in _alts2 if _nmap2.get(o, o) != _orig_p2] + [_OTHER_LABEL]
+                            st.markdown("<span style='font-size:10px;color:var(--muted)'>AA</span>", unsafe_allow_html=True)
+                            st.selectbox("AA", _opts2, index=0, label_visibility="collapsed",
+                                         key=f"sel_{confirm_month}_{_idx}_1")
+                            if st.session_state.get(f"sel_{confirm_month}_{_idx}_1") == _OTHER_LABEL:
+                                st.text_input("Name", key=f"free_{confirm_month}_{_idx}_1",
+                                              placeholder="V. Nachname", label_visibility="collapsed")
+
+                            # Resolve current values from widget state (always current rerun)
+                            _cur_p1 = _resolve_sel(f"sel_{confirm_month}_{_idx}_0", _nmap1, _orig_p1)
+                            _cur_p2 = _resolve_sel(f"sel_{confirm_month}_{_idx}_1", _nmap2, _orig_p2)
+                            _row_changed = (_cur_p1 != _orig_p1 or _cur_p2 != _orig_p2)
+                        else:
+                            _alts, _nmap = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _orig_p1)
+                            _opts = [_orig_p1] + [o for o in _alts if _nmap.get(o, o) != _orig_p1] + [_OTHER_LABEL]
+                            st.markdown("<span style='font-size:10px;color:var(--muted)'>Verantwortlich</span>", unsafe_allow_html=True)
+                            st.selectbox("Verantwortlich", _opts, index=0, label_visibility="collapsed",
+                                         key=f"sel_{confirm_month}_{_idx}")
+                            if st.session_state.get(f"sel_{confirm_month}_{_idx}") == _OTHER_LABEL:
+                                st.text_input("Name", key=f"free_{confirm_month}_{_idx}",
+                                              placeholder="V. Nachname", label_visibility="collapsed")
+
+                            _cur_p1 = _resolve_sel(f"sel_{confirm_month}_{_idx}", _nmap, _orig_p1)
+                            _row_changed = (_cur_p1 != _orig_p1)
+
                     with _cl:
+                        _accent = "border-left:3px solid var(--teal);" if _row_changed else "border-left:3px solid transparent;"
                         st.markdown(
                             f"<div style='{_accent}padding:6px 0 4px 6px'>"
                             f"<span style='font-size:12px;font-weight:600;color:var(--navy)'>{_date_str}</span> "
@@ -1052,60 +1089,36 @@ with tab3:
                             f"</div>",
                             unsafe_allow_html=True,
                         )
-                    with _cr:
-                        if _is_jc:
-                            # Build opts — always use _pend_p1 as current (display name, not label)
-                            _alts1, _nmap1 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _pend_p1)
-                            _nmap_cache[f"{_idx}_0"] = _nmap1
-                            # Only include alt options where the resolved name != current
-                            _opts1 = [_pend_p1] + [o for o in _alts1 if _nmap1.get(o, o) != _pend_p1] + [_OTHER_LABEL]
-                            st.markdown("<span style='font-size:10px;color:var(--muted)'>OA / Intermediate</span>", unsafe_allow_html=True)
-                            _sel1 = st.selectbox("OA", _opts1, index=0, label_visibility="collapsed",
-                                                 key=f"sel_{confirm_month}_{_idx}_0")
-                            if _sel1 == _OTHER_LABEL:
-                                _free1 = st.text_input("Name", key=f"free_{confirm_month}_{_idx}_0",
-                                                        placeholder="V. Nachname", label_visibility="collapsed")
-                                if _free1.strip():
-                                    _pending[f"{_idx}_0"] = _free1.strip()
-                            else:
-                                # _nmap1 maps label→display_name; if not found, sel is already display_name
-                                _pending[f"{_idx}_0"] = _nmap1.get(_sel1, _sel1)
-
-                            _alts2, _nmap2 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=1), _pend_p2)
-                            _nmap_cache[f"{_idx}_1"] = _nmap2
-                            _opts2 = [_pend_p2] + [o for o in _alts2 if _nmap2.get(o, o) != _pend_p2] + [_OTHER_LABEL]
-                            st.markdown("<span style='font-size:10px;color:var(--muted)'>AA</span>", unsafe_allow_html=True)
-                            _sel2 = st.selectbox("AA", _opts2, index=0, label_visibility="collapsed",
-                                                 key=f"sel_{confirm_month}_{_idx}_1")
-                            if _sel2 == _OTHER_LABEL:
-                                _free2 = st.text_input("Name", key=f"free_{confirm_month}_{_idx}_1",
-                                                        placeholder="V. Nachname", label_visibility="collapsed")
-                                if _free2.strip():
-                                    _pending[f"{_idx}_1"] = _free2.strip()
-                            else:
-                                _pending[f"{_idx}_1"] = _nmap2.get(_sel2, _sel2)
-                        else:
-                            _alts, _nmap = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _pend_p1)
-                            _nmap_cache[str(_idx)] = _nmap
-                            _opts = [_pend_p1] + [o for o in _alts if _nmap.get(o, o) != _pend_p1] + [_OTHER_LABEL]
-                            st.markdown("<span style='font-size:10px;color:var(--muted)'>Verantwortlich</span>", unsafe_allow_html=True)
-                            _sel = st.selectbox("Verantwortlich", _opts, index=0, label_visibility="collapsed",
-                                                key=f"sel_{confirm_month}_{_idx}")
-                            if _sel == _OTHER_LABEL:
-                                _free = st.text_input("Name", key=f"free_{confirm_month}_{_idx}",
-                                                       placeholder="V. Nachname", label_visibility="collapsed")
-                                if _free.strip():
-                                    _pending[_idx] = _free.strip()
-                            else:
-                                _pending[_idx] = _nmap.get(_sel, _sel)
 
                     st.markdown("<div style='height:1px;background:var(--border);opacity:.35;margin:0'></div>", unsafe_allow_html=True)
 
-                # Persist updated pending dict after all rows are processed
-                st.session_state[_pending_key] = _pending
+                # ── Build pending dict from current widget state (after all rows rendered) ──
+                _pending = {}
+                for _idx2, _row2 in _sc_rel.iterrows():
+                    _evt2     = str(_row2.get("event_type", ""))
+                    _is_jc2   = (_evt2 == "Journal_Club")
+                    _orig2    = _row2.get("responsible", "") or "— TBD —"
+                    if _is_jc2:
+                        _parts2  = [p.strip() for p in _orig2.split("/")]
+                        _op1     = _parts2[0] if len(_parts2) > 0 else "— TBD —"
+                        _op2     = _parts2[1] if len(_parts2) > 1 else "— TBD —"
+                        _alts1b, _nm1b = _format_alt_opts(_build_row_alternatives(_row2, slot_idx=0), _op1)
+                        _alts2b, _nm2b = _format_alt_opts(_build_row_alternatives(_row2, slot_idx=1), _op2)
+                        _v1 = _resolve_sel(f"sel_{confirm_month}_{_idx2}_0", _nm1b, _op1)
+                        _v2 = _resolve_sel(f"sel_{confirm_month}_{_idx2}_1", _nm2b, _op2)
+                        if _v1 != _op1:
+                            _pending[f"{_idx2}_0"] = _v1
+                        if _v2 != _op2:
+                            _pending[f"{_idx2}_1"] = _v2
+                    else:
+                        _op1 = _orig2 if isinstance(_orig2, str) else "— TBD —"
+                        _altsb, _nmb = _format_alt_opts(_build_row_alternatives(_row2, slot_idx=0), _op1)
+                        _v = _resolve_sel(f"sel_{confirm_month}_{_idx2}", _nmb, _op1)
+                        if _v != _op1:
+                            _pending[_idx2] = _v
 
-                # ── Plan aktualisieren button — shown AFTER rows so count is current ──
-                _n_pending = _count_pending(_base_sc, _pending)
+                # ── Plan aktualisieren button ─────────────────────────────────
+                _n_pending = len(_pending)
                 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
                 _ua_col, _info_col = st.columns([2, 5])
                 with _ua_col:
@@ -1129,7 +1142,11 @@ with tab3:
                     st.session_state.pop("schedule_all", None)
                     st.session_state.pop(f"notify_schedule_{confirm_month}", None)
                     st.session_state.pop(f"word_file_{confirm_month}", None)
-                    st.session_state[_pending_key] = {}
+                    # Clear all selectbox widget states for this month so they reset to
+                    # the newly committed values (index 0 = new responsible name)
+                    for _wk in list(st.session_state.keys()):
+                        if _wk.startswith(f"sel_{confirm_month}_") or _wk.startswith(f"free_{confirm_month}_"):
+                            del st.session_state[_wk]
                     _banner("Plan aktualisiert.", "ok")
                     st.rerun()
 
@@ -1404,43 +1421,61 @@ with tab4:
             month_label = f"{MONTH_NAMES_DE[notify_month]} 2026"
 
             # ── Build firstname lookup from PEP ───────────────────────────────
-            # PEP has first_name + last_name columns. Build lastname→firstname map
-            # so emails say "Liebe/r Yoel" not "Liebe/r Y."
-            from src.fairness import _extract_lastname as _el
+            # PEP has first_name column. Build two keys per person:
+            #   lastname alone     → e.g. "annen"   → "Nadja"
+            #   initial.lastname   → e.g. "n. annen" → "Nadja"  (post-format_people key)
+            # This handles both PEP-assigned (initial format) and sheet-based names.
             _pep_fn_lookup: dict = {}
             _pep_raw_ben = data.get("pep")
             if _pep_raw_ben is not None and not _pep_raw_ben.empty:
                 for _, _pr in _pep_raw_ben.drop_duplicates("name_clean").iterrows():
-                    _ln = _extract_lastname(str(_pr.get("name_clean", "") or ""))
-                    _fn = str(_pr.get("first_name", "") or "").strip().capitalize()
-                    if _ln and _fn:
+                    _nc  = str(_pr.get("name_clean", "") or "").strip().lower()
+                    _fn  = str(_pr.get("first_name", "") or "").strip().capitalize()
+                    if not _nc or not _fn:
+                        continue
+                    # key 1: lastname (first non-initial token in name_clean)
+                    _ln = _extract_lastname(_nc)
+                    if _ln:
                         _pep_fn_lookup[_ln] = _fn
+                    # key 2: "F. Lastname" format (what format_people produces)
+                    # name_clean is "lastname firstname", so reconstruct "F. Lastname"
+                    _nc_parts = _nc.split()
+                    if len(_nc_parts) >= 2:
+                        _init_key = f"{_nc_parts[-1][0].upper()}. {_nc_parts[0].capitalize()}"
+                        _pep_fn_lookup[_init_key] = _fn
+
+            # ── Non-person entries to skip ────────────────────────────────────
+            _NON_PERSONS = {"fallführende ärzteschaft", "fallführende aerzteschaft"}
 
             # ── Build email list ──────────────────────────────────────────────
             # Each selected row may have multiple people (e.g. Journal Club "Y. Berger / M.E. Jaquier").
             # We send one email per individual person, with only their own rows.
-            kim_email     = "kim.backoffice1@gmail.com"
+            # Non-person entries like "Fallführende Ärzteschaft" are skipped.
+            kim_email      = "kim.backoffice1@gmail.com"
             emails_to_send = []
             selected_orig  = notify_df.loc[selected.index]
 
-            # Expand: build a flat list of (individual_name, row) pairs
             individual_rows: dict = {}  # name → list of rows
             for _, row in selected_orig.iterrows():
                 responsible = str(row.get("responsible", "") or "")
                 names = [n.strip() for n in responsible.split("/") if n.strip()]
                 for name in names:
-                    if name and name != "— TBD —":
+                    if name and name != "— TBD —" and name.lower() not in _NON_PERSONS:
                         individual_rows.setdefault(name, []).append(row)
 
             import pandas as _pd_mail
             for person, rows in individual_rows.items():
-                # Resolve firstname: PEP lookup by lastname → fallback to [FIRST NAME]
-                _person_ln   = _extract_lastname(person.lower().strip())
-                _person_fn   = _pep_fn_lookup.get(_person_ln, "[FIRST NAME]")
+                # Resolve firstname: try exact match, then lastname-only match
+                _person_key = person.strip()
+                _person_fn  = (
+                    _pep_fn_lookup.get(_person_key)          # "N. Annen" exact
+                    or _pep_fn_lookup.get(_extract_lastname(person.lower().strip()))  # "annen"
+                    or None
+                )
                 person_rows_orig = _pd_mail.DataFrame(rows)
                 subject, body = get_email_for_person(
                     person=person,
-                    firstname=_person_fn,
+                    firstname=_person_fn,  # None → template uses _extract_firstname fallback
                     person_rows=person_rows_orig,
                     month_label=month_label,
                 )
