@@ -187,11 +187,21 @@ nadja"""
     return subject, body
 
 
-def template_journal_club(person, person_rows, month_label, firstname=None):
+def template_journal_club(person, person_rows, month_label, firstname=None, jc_role="aa"):
     if not firstname or firstname == "[FIRST NAME]":
         firstname = _extract_firstname(person)
     subject   = f"Journal Club {month_label} – Anfrage/Einteilung"
     lines     = _assignment_lines(person_rows)
+    if jc_role == "oa":
+        _role_line = (
+            "Als Oberarzt/Oberärztin leitest du den Journal Club und unterstützt "
+            "die Assistenzärztin / den Assistenzarzt bei der kritischen Beurteilung des Papers."
+        )
+    else:
+        _role_line = (
+            "Bitte führe die Literaturrecherche selbständig durch \u2014 "
+            "dein:e Oberarzt/Oberärztin unterstützt dich bei Bedarf."
+        )
     body = f"""Liebe/r {firstname}
 
 Ich möchte Dich gerne für den Journal Club {month_label} anfragen/einteilen.
@@ -205,7 +215,7 @@ Die Lernziele sind:
 • Beurteilung der Relevanz für die klinische Arbeit
 • Verbesserung statistischer Kenntnisse
 
-Bitte führe die Literaturrecherche selbstständig durch – dein:e Oberärzt:in unterstützt dich bei Bedarf.
+{_role_line}
 Es sollte ein grosses intensivmedizinisches Journal sein oder ein anderes grosses Journal mit intensivmedizinischem Thema (Bsp. NEJM, JAMA oä.). Das Paper sollte nicht älter als 12 Monate sein. Bitte keine Reviews oder Case reports auswählen.
 Für statistische und methodologische Fragen ist während des Journal Club ein Leitender Arzt anwesend.
 
@@ -258,22 +268,17 @@ EVENT_TEMPLATES = {
 }
 
 
-def get_email(event_type, person, person_rows, month_label, firstname=None):
+def get_email(event_type, person, person_rows, month_label, firstname=None, jc_role="aa"):
     template_fn = EVENT_TEMPLATES.get(event_type, template_generic)
+    if event_type == "Journal_Club":
+        return template_fn(person, person_rows, month_label, firstname=firstname, jc_role=jc_role)
     return template_fn(person, person_rows, month_label, firstname=firstname)
 
 
-def get_email_for_person(person, person_rows, month_label, firstname=None):
-    """
-    Pick the right template based on event type.
-    If a person has multiple different event types in one batch, use generic.
-
-    person     — display name e.g. "J. Prazak" or "Julian Lippert" (used for display)
-    firstname  — resolved first name from PEP lookup e.g. "Yoel"; falls back to
-                 _extract_firstname(person) if not provided, or "[FIRST NAME]" if
-                 that also fails to produce a real name.
-    """
+def get_email_for_person(person, person_rows, month_label, firstname=None, jc_role="aa"):
+    """jc_role: 'oa' for OA/Intermediate slot (person 1), 'aa' for AA slot (person 2)."""
     event_types = person_rows["event_type"].unique().tolist()
     if len(event_types) == 1:
-        return get_email(event_types[0], person, person_rows, month_label, firstname=firstname)
+        return get_email(event_types[0], person, person_rows, month_label,
+                         firstname=firstname, jc_role=jc_role)
     return template_generic(person, person_rows, month_label, firstname=firstname)
