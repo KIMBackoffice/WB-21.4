@@ -100,7 +100,7 @@ with _hcol:
 
         "<div class=\"kim-bar-right\">"
         "<div class=\"kim-meta-date\">" + _today + "</div>"
-        "<div class=\"kim-meta-contact\">DEMO 21.04.2026 &nbsp;&middot;&nbsp; "+ " &nbsp;&middot;&nbsp; kim.backoffice1@gmail.com</div>"
+        "<div class=\"kim-meta-contact\">DEMO &nbsp;&middot;&nbsp; " + _today + " &nbsp;&middot;&nbsp; kim.backoffice1@gmail.com</div>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,
@@ -1403,45 +1403,51 @@ with tab4:
 
             month_label = f"{MONTH_NAMES_DE[notify_month]} 2026"
 
-            # ── Build email list ──────────────────────────────────────────────
-            from src.email_lookup import lookup_email
-            from src.email_lookup import lookup_email as _lookup, _load_email_sheet
-            from src.selector import _extract_lastname
+            # ── Build firstname lookup from PEP ───────────────────────────────
+            # PEP has first_name + last_name columns. Build lastname→firstname map
+            # so emails say "Liebe/r Yoel" not "Liebe/r Y."
+            from src.fairness import _extract_lastname as _el
+            _pep_fn_lookup: dict = {}
+            _pep_raw_ben = data.get("pep")
+            if _pep_raw_ben is not None and not _pep_raw_ben.empty:
+                for _, _pr in _pep_raw_ben.drop_duplicates("name_clean").iterrows():
+                    _ln = _extract_lastname(str(_pr.get("name_clean", "") or ""))
+                    _fn = str(_pr.get("first_name", "") or "").strip().capitalize()
+                    if _ln and _fn:
+                        _pep_fn_lookup[_ln] = _fn
 
+            # ── Build email list ──────────────────────────────────────────────
+            # Each selected row may have multiple people (e.g. Journal Club "Y. Berger / M.E. Jaquier").
+            # We send one email per individual person, with only their own rows.
+            kim_email     = "kim.backoffice1@gmail.com"
             emails_to_send = []
             selected_orig  = notify_df.loc[selected.index]
 
-            for person in selected_orig["responsible"].unique():
-                person_rows      = selected_orig[selected_orig["responsible"] == person]
-                person_rows_orig = person_rows.copy()
+            # Expand: build a flat list of (individual_name, row) pairs
+            individual_rows: dict = {}  # name → list of rows
+            for _, row in selected_orig.iterrows():
+                responsible = str(row.get("responsible", "") or "")
+                names = [n.strip() for n in responsible.split("/") if n.strip()]
+                for name in names:
+                    if name and name != "— TBD —":
+                        individual_rows.setdefault(name, []).append(row)
 
-                name_clean   = person.lower().strip()
-                lastname     = _extract_lastname(name_clean)
-                sheet        = _load_email_sheet()
-
-                parts        = name_clean.split()
-                has_initial  = any(p.endswith(".") for p in parts)
-                non_initials = [p for p in parts if not p.endswith(".")]
-                if has_initial:
-                    firstname = non_initials[-1].capitalize() if non_initials else person.title().strip()
-                elif len(non_initials) >= 2:
-                    firstname = non_initials[-1].capitalize()
-                else:
-                    firstname = non_initials[0].capitalize() if non_initials else person.title().strip()
-
-                salutation = firstname
+            import pandas as _pd_mail
+            for person, rows in individual_rows.items():
+                # Resolve firstname: PEP lookup by lastname → fallback to [FIRST NAME]
+                _person_ln   = _extract_lastname(person.lower().strip())
+                _person_fn   = _pep_fn_lookup.get(_person_ln, "[FIRST NAME]")
+                person_rows_orig = _pd_mail.DataFrame(rows)
                 subject, body = get_email_for_person(
-                    person=salutation,
+                    person=person,
+                    firstname=_person_fn,
                     person_rows=person_rows_orig,
                     month_label=month_label,
                 )
-                kim_email = "kim.backoffice1@gmail.com"
                 emails_to_send.append({
-                    "person":  salutation,
+                    "person":  person,
                     "display": person.title().strip(),
-                    "to_real": kim_email,
                     "to_addr": kim_email,
-                    "found":   True,
                     "subject": subject,
                     "body":    body,
                 })
