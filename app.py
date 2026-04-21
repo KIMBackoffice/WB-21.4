@@ -100,7 +100,7 @@ with _hcol:
 
         "<div class=\"kim-bar-right\">"
         "<div class=\"kim-meta-date\">" + _today + "</div>"
-        "<div class=\"kim-meta-contact\">UNDER CONSTRUCTION - kim.backoffice1@gmail.com</div>"
+        "<div class=\"kim-meta-contact\">DEMO &nbsp;&middot;&nbsp; " + _today + " &nbsp;&middot;&nbsp; kim.backoffice1@gmail.com</div>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,
@@ -383,58 +383,59 @@ with tab1:
 <div class="guide-step">
 <div class="guide-num">1</div>
 <div class="guide-body">
-<b>Automatischer Start</b><br>
-Nach der Passwort-Eingabe lädt die App <b>automatisch</b> alle Google Sheets, generiert den Kalender und weist Personen zu — für alle 12 Monate auf einmal. Du siehst den Ladefortschritt mit den drei Phasen: Daten laden → Kalender generieren → Personal zuweisen.
+<b>Wie funktioniert die App?</b><br>
+Die Weiterbildungsplanung basiert auf zwei Datenquellen: dem <b>PEP</b> (Dienstplanung) und mehreren <b>Google Sheets</b>, in denen wiederkehrende Veranstaltungen gepflegt werden. Die App liest diese Daten automatisch ein und erstellt daraus einen vollständigen Monatsplan.
 </div>
 </div>
 
 <div class="guide-step">
 <div class="guide-num">2</div>
 <div class="guide-body">
-<b>Jahresübersicht &amp; Monatsauswahl</b><br>
-Der Plan zeigt standardmässig <b>alle Monate</b> ab dem aktuellen Monat als scrollbare Tabelle. Im Dropdown oben links kannst du auf einen einzelnen Monat wechseln. Mit <b>Termine laden</b> kannst du die Sheets jederzeit manuell neu einlesen, mit <b>Personen zuweisen</b> die Zuweisung für einen einzelnen Monat neu berechnen.
+<b>Plan ansehen (Tab «Plan»)</b><br>
+Der Tab «Plan» zeigt alle Veranstaltungen in einer Übersichtstabelle, sortiert nach Datum. Über das Dropdown kann auf einen einzelnen Monat gewechselt werden. Die Tabelle zeigt Datum, Uhrzeit, Verantwortliche Person, Thema und Raum.<br><br>
+Der Plan kann als <b>CSV</b> oder als <b>Word-Datei</b> heruntergeladen werden — die Word-Datei ist nach der KIM-Formatierungsvorlage gestaltet.<br><br>
+Vergangene Monate können eingesehen werden, zeigen aber einen Hinweis, die definitive Dienstplanung zu konsultieren. Monate ohne geladene PEP-Daten zeigen einen Hinweis, dass nur terminbasierte Veranstaltungen sichtbar sind.
 </div>
 </div>
 
 <div class="guide-step">
 <div class="guide-num">3</div>
 <div class="guide-body">
-<b>Plan prüfen &amp; exportieren</b><br>
-Monate mit PEP-Daten zeigen <b>Plan generiert</b>. Monate ohne PEP zeigen einen Platzhalter-Banner. Unter <b>Validierung</b> siehst du Probleme (z.B. Person doppelt eingeplant). Exportiere als <b>CSV</b> oder <b>Word</b>.
+<b>Fairness-Analyse (Tab «Analyse»)</b><br>
+Der Tab «Analyse» ist für die Planung gedacht. Er zeigt, wer in den kommenden Monaten wie oft für algorithmisch zugewiesene Veranstaltungen eingeplant wurde — und ob die Belastung gleichmässig verteilt ist. Für überlastete Einträge werden geeignete Alternativen aus dem PEP vorgeschlagen.
 </div>
 </div>
 
 <div class="guide-step">
 <div class="guide-num">4</div>
 <div class="guide-body">
-<b>Personen anpassen (Bestätigung → Rolle A)</b><br>
-Im Tab «Bestätigung» kann Rolle A bei algorithmisch zugewiesenen Veranstaltungen (Mittwochscurriculum, Journal Club, COD, PEER etc.) die verantwortliche Person direkt ersetzen — per Dropdown mit Fairness-sortierten Vorschlägen oder Freitext (Format: <code>V. Nachname</code>).
+<b>Bestätigung &amp; Freigabe (Tab «Bestätigung»)</b><br>
+Der Tab «Bestätigung» hat drei Rollen:<br><br>
+<b>Rolle A</b> kann den Monatsplan prüfen und Personenzuweisungen anpassen:
+<ul>
+<li>Bei <b>algorithmisch zugewiesenen Veranstaltungen</b> (z.B. Mittwochscurriculum, Journal Club, COD, PEER) kann Rolle A die verantwortliche Person direkt ersetzen. Geeignete Alternativen werden automatisch aus dem PEP vorgeschlagen (nach Rolle und Dienstart). Nach dem Anpassen <b>«Plan aktualisieren»</b> klicken.</li>
+<li>Bei <b>Sheet-basierten Veranstaltungen</b> (z.B. Teaching Tuesday, TTE Curriculum, Bedside Infektiologie) ist die verantwortliche Person direkt im jeweiligen Google Sheet hinterlegt — bitte dort anpassen.</li>
+</ul>
+<b>Rolle B</b> prüft den Plan und bestätigt.<br><br>
+<b>Rolle C (Admin)</b> prüft, bestätigt und finalisiert den Plan, sobald alle drei Rollen bestätigt haben. Der finalisierte Plan wird als CSV exportiert — dies dient der Fairness-Auswertung für künftige Monate.
 </div>
 </div>
 
 <div class="guide-step">
 <div class="guide-num">5</div>
 <div class="guide-body">
-<b>Bestätigung &amp; Finalisierung</b> (Tab «Bestätigung»)<br>
-Drei Reviewer (A, B, C) müssen den Plan je einzeln bestätigen. Admin (C) finalisiert und sperrt. Der Plan wird als CSV für das Google Sheet «Historical_Assignment» exportiert.
-</div>
-</div>
-
-<div class="guide-step">
-<div class="guide-num">6</div>
-<div class="guide-body">
-<b>Benachrichtigungen senden</b> (Tab «Benachrichtigung»)<br>
-Verschicke vorbereitete E-Mails als Mailto-Links, die Outlook öffnen.
+<b>Benachrichtigungen (Tab «Benachrichtigung»)</b><br>
+Aktuell als Demo / Konzept: Im Tab «Benachrichtigung» können vorbereitete E-Mails an die verantwortlichen Personen als Mailto-Links geöffnet werden (öffnet Outlook mit vorausgefülltem Text).
 </div>
 </div>
 
 <div class="guide-tips">
 <b>Wichtige Hinweise</b>
 <ul>
-<li>Um den Cache zu leeren und die App zurückzusetzen: App auf Streamlit Cloud neu starten (<b>Manage app → Reboot</b>) oder ↺ im Browser.</li>
-<li>Der <b>Fairness-Algorithmus</b> (Tab «Analyse») zeigt wer zu oft oder zu selten eingeplant wurde.</li>
+<li>Die Grunddaten (Veranstaltungsserien, Themen, Referenten) werden in <b>Google Sheets</b> gepflegt. Bei Änderungsbedarf bitte das jeweilige Google Sheet direkt bearbeiten oder <a href="mailto:kim.backoffice1@gmail.com">kim.backoffice1@gmail.com</a> kontaktieren.</li>
+<li>Der <b>Fairness-Algorithmus</b> (Tab «Analyse») zeigt, wer in den kommenden Monaten zu oft eingeplant wurde.</li>
 <li>Finalisierte Monate sind gesperrt — eine Neuzuweisung ist dann nicht mehr möglich.</li>
-<li>Bei Problemen oder Fragen: <a href="mailto:kim.backoffice1@gmail.com">kim.backoffice1@gmail.com</a></li>
+<li>Bei technischen Fragen oder Problemen mit der App: <a href="mailto:kim.backoffice1@gmail.com">kim.backoffice1@gmail.com</a></li>
 </ul>
 </div>
 
