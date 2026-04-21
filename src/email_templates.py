@@ -23,9 +23,18 @@ def _format_time_range(row):
     return t if t else ""
 
 
+# Topics that are just the event name repeated — skip them so the line
+# doesn't say "Mittwoch Curriculum   Mittwochscurriculum"
+_REDUNDANT_TOPICS = {
+    "mittwochscurriculum", "journal club", "peer-teaching session",
+    "peer teaching", "physiologie talk", "case of the day (cod)",
+    "s - case of the day (cod)",
+}
+
 def _clean_topic(topic, event_type=""):
-    """Strip redundant event-type prefixes from topic string."""
+    """Strip redundant or duplicate topic strings."""
     topic = str(topic or "").strip()
+    # Strip known event-type prefixes
     for prefix in [
         "Mittwochscurriculum:", "Physio Teaching:",
         "Journal Club", "Peer-Teaching Session", "Peer Teaching",
@@ -35,6 +44,9 @@ def _clean_topic(topic, event_type=""):
         if topic.startswith(prefix):
             topic = topic[len(prefix):].strip(" –-:")
             break
+    # If what remains is just the event name restated, drop it entirely
+    if topic.lower() in _REDUNDANT_TOPICS:
+        return ""
     return topic
 
 
@@ -51,11 +63,7 @@ def _assignment_lines(person_rows):
         topic_str = _clean_topic(r.get("topic", ""), r.get("event_type", ""))
         room_str  = str(r.get("room", "") or "").strip()
 
-        parts = [date_str, time_str, evt_str]
-        if topic_str:
-            parts.append(topic_str)
-        if room_str:
-            parts.append(room_str)
+        parts = [p for p in [date_str, time_str, evt_str, topic_str, room_str] if p]
         lines.append("   ".join(parts))
     return "\n".join(lines)
 
