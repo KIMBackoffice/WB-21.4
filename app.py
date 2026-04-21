@@ -100,7 +100,7 @@ with _hcol:
 
         "<div class=\"kim-bar-right\">"
         "<div class=\"kim-meta-date\">" + _today + "</div>"
-        "<div class=\"kim-meta-contact\">DEMO &nbsp;&middot;&nbsp; " + _today + " &nbsp;&middot;&nbsp; kim.backoffice1@gmail.com</div>"
+        "<div class=\"kim-meta-contact\">DEMO 21.04.2026 &nbsp;&middot;&nbsp; "+ " &nbsp;&middot;&nbsp; kim.backoffice1@gmail.com</div>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,
