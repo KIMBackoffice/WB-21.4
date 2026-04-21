@@ -17,40 +17,87 @@ def _format_date(date_val):
         return str(date_val)
 
 
-def _assignment_lines(person_rows, firstname=""):
-    """Build date + name lines, e.g. '14.10.  Lisa'"""
+def _format_time_range(row):
+    """Return e.g. '14:30–15:15' from the time field."""
+    t = str(row.get("time", "")).strip()
+    return t if t else ""
+
+
+def _clean_topic(topic, event_type=""):
+    """Strip redundant event-type prefixes from topic string."""
+    topic = str(topic or "").strip()
+    for prefix in [
+        "Mittwochscurriculum:", "Physio Teaching:",
+        "Journal Club", "Peer-Teaching Session", "Peer Teaching",
+        "Case of the Day (COD)", "S - Case of the Day (COD)",
+        "Fokus Intensivpflege:", "EPIC Update:",
+    ]:
+        if topic.startswith(prefix):
+            topic = topic[len(prefix):].strip(" –-:")
+            break
+    return topic
+
+
+def _assignment_lines(person_rows):
+    """
+    Build one detail line per row:
+      Mi 1.4.   14:30–15:15   Mittwoch Curriculum   Thema   INO E218
+    """
     lines = []
     for _, r in person_rows.iterrows():
-        d     = _format_date(r["date"])
-        topic = str(r.get("topic") or "").strip()
-        # Strip long event-type prefixes from the topic so it stays clean
-        for prefix in [
-            "Mittwochscurriculum:", "Physio Teaching:",
-            "Journal Club", "Peer-Teaching Session", "Peer Teaching",
-            "Case of the Day (COD)", "S - Case of the Day (COD)",
-            "Fokus Intensivpflege:", "EPIC Update:",
-        ]:
-            if topic.startswith(prefix):
-                topic = topic[len(prefix):].strip(" –-:")
-                break
-        name_part = f"  {firstname}" if firstname else ""
-        lines.append(f"{d}{name_part}")
+        date_str  = _format_date(r["date"])
+        time_str  = _format_time_range(r)
+        evt_str   = str(r.get("event_type", "")).replace("_", " ")
+        topic_str = _clean_topic(r.get("topic", ""), r.get("event_type", ""))
+        room_str  = str(r.get("room", "") or "").strip()
+
+        parts = [date_str, time_str, evt_str]
+        if topic_str:
+            parts.append(topic_str)
+        if room_str:
+            parts.append(room_str)
+        lines.append("   ".join(parts))
     return "\n".join(lines)
 
 
-def _salutation(person):
-    """Return 'Liebe/r' — always uses first name passed in."""
-    return f"Liebe/r {person}"
+def _extract_firstname(person: str) -> str:
+    """
+    Extract the best available firstname for salutation.
+
+    Handles:
+      "Julian Lippert"           → "Julian"
+      "Anna Messmer"             → "Anna"
+      "Marie-Noelle Kronig"      → "Marie-Noelle"
+      "J. Prazak"                → "J."   (initial only — no full name available)
+      "Y.A. Que"                 → "Y.A." (double initial)
+      "N. Annen"                 → "N."
+    If the name is initial-format we return the initial so Nadja can correct
+    the draft — better than guessing wrong.
+    """
+    name = person.strip()
+    parts = name.split()
+    if not parts:
+        return name
+
+    first = parts[0]
+    # Looks like an initial: "J.", "Y.A.", "M.-E.", "H.P."
+    if "." in first:
+        return first  # return as-is, e.g. "J."
+
+    # Full first name — may be hyphenated like "Marie-Noelle"
+    return first.capitalize()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEMPLATES  (each follows Nadja's exact tone and wording)
+# TEMPLATES
 # ─────────────────────────────────────────────────────────────────────────────
 
-def template_mittwoch(person, person_rows, month_label):
-    subject = f"Mittwochscurriculum {month_label} – Einteilung"
-    lines   = _assignment_lines(person_rows, person)
-    body = f"""Liebe/r {person}
+def template_mittwoch(person, person_rows, month_label, firstname=None):
+    if not firstname or firstname == "[FIRST NAME]":
+        firstname = _extract_firstname(person)
+    subject   = f"Mittwochscurriculum {month_label} – Einteilung"
+    lines     = _assignment_lines(person_rows)
+    body = f"""Liebe/r {firstname}
 
 Hier die Einteilung fürs Mittwochscurriculum {month_label}:
 
@@ -65,10 +112,12 @@ nadja"""
     return subject, body
 
 
-def template_peer(person, person_rows, month_label):
-    subject = f"Peer-Teaching Session {month_label} – Anfrage/Einteilung"
-    lines   = _assignment_lines(person_rows, person)
-    body = f"""Liebe/r {person}
+def template_peer(person, person_rows, month_label, firstname=None):
+    if not firstname or firstname == "[FIRST NAME]":
+        firstname = _extract_firstname(person)
+    subject   = f"Peer-Teaching Session {month_label} – Anfrage/Einteilung"
+    lines     = _assignment_lines(person_rows)
+    body = f"""Liebe/r {firstname}
 
 Gerne möchte ich Dich für die Peer-Teaching Session einteilen/anfragen:
 
@@ -85,10 +134,12 @@ nadja"""
     return subject, body
 
 
-def template_physio(person, person_rows, month_label):
-    subject = f"Physiologie-Talk {month_label} – Anfrage/Einteilung"
-    lines   = _assignment_lines(person_rows, person)
-    body = f"""Liebe/r {person}
+def template_physio(person, person_rows, month_label, firstname=None):
+    if not firstname or firstname == "[FIRST NAME]":
+        firstname = _extract_firstname(person)
+    subject   = f"Physiologie-Talk {month_label} – Anfrage/Einteilung"
+    lines     = _assignment_lines(person_rows)
+    body = f"""Liebe/r {firstname}
 
 Gerne möchte ich Dich für den Physiologie-Talk einteilen/anfragen:
 
@@ -105,16 +156,16 @@ nadja"""
     return subject, body
 
 
-def template_cod(person, person_rows, month_label):
-    subject = f"Case of the Day {month_label} – Anfrage/Einteilung"
-    lines   = _assignment_lines(person_rows, person)
-    body = f"""Liebe/r {person}
+def template_cod(person, person_rows, month_label, firstname=None):
+    if not firstname or firstname == "[FIRST NAME]":
+        firstname = _extract_firstname(person)
+    subject   = f"Case of the Day {month_label} – Anfrage/Einteilung"
+    lines     = _assignment_lines(person_rows)
+    body = f"""Liebe/r {firstname}
 
-Gerne möchte ich Dich für die Peer-Teaching Session einteilen/anfragen:
+Gerne möchte ich Dich für den Case of the Day einteilen/anfragen:
 
 {lines}
-
-Er findet jeweils jeden 2. Dienstag nach dem Röntgenrapport statt und soll ca. 15 Minuten dauern.
 
 Ihr könnt einen Fall aus der näheren Vergangenheit präsentieren der spannend oder eine Herausforderung war und das Therapiekonzept nochmals genauer beleuchten – mit Hilfe des anwesenden BL und des Auditoriums.
 Oder auch einen älteren Fall vorstellen der Euch in Erinnerung geblieben ist und anhand dessen Ihr Euren Peers ein bestimmtes Lernziel weitergeben könnt.
@@ -128,10 +179,12 @@ nadja"""
     return subject, body
 
 
-def template_journal_club(person, person_rows, month_label):
-    subject = f"Journal Club {month_label} – Anfrage/Einteilung"
-    lines   = _assignment_lines(person_rows, person)
-    body = f"""Liebe/r {person}
+def template_journal_club(person, person_rows, month_label, firstname=None):
+    if not firstname or firstname == "[FIRST NAME]":
+        firstname = _extract_firstname(person)
+    subject   = f"Journal Club {month_label} – Anfrage/Einteilung"
+    lines     = _assignment_lines(person_rows)
+    body = f"""Liebe/r {firstname}
 
 Ich möchte Dich gerne für den Journal Club {month_label} anfragen/einteilen.
 
@@ -156,16 +209,18 @@ nadja"""
     return subject, body
 
 
-def template_generic(person, person_rows, month_label):
-    subject = f"Weiterbildung {month_label} – Einteilung"
-    lines   = _assignment_lines(person_rows, person)
-    body = f"""Liebe/r {person}
+def template_generic(person, person_rows, month_label, firstname=None):
+    if not firstname or firstname == "[FIRST NAME]":
+        firstname = _extract_firstname(person)
+    subject   = f"Weiterbildung {month_label} – Einteilung"
+    lines     = _assignment_lines(person_rows)
+    body = f"""Liebe/r {firstname}
 
 Hier die Einteilung für {month_label}:
 
 {lines}
 
-Bei Fragen melde dich gerne.
+[Placeholder]
 
 Ganz herzlichen Dank und liebe Grüsse
 nadja"""
@@ -177,34 +232,40 @@ nadja"""
 # ─────────────────────────────────────────────────────────────────────────────
 
 EVENT_TEMPLATES = {
-    "Mittwoch_Curriculum":  template_mittwoch,
-    "PEER":                 template_peer,
-    "COD_JUNIOR":           template_cod,
-    "COD_SENIOR":           template_cod,
-    "PHYSIO":               template_physio,
-    "Journal_Club":         template_journal_club,
-    "Teaching_Tuesday":     template_peer,       # same tone as peer teaching
+    "Mittwoch_Curriculum":   template_mittwoch,
+    "PEER":                  template_peer,
+    "COD_JUNIOR":            template_cod,
+    "COD_SENIOR":            template_cod,
+    "PHYSIO":                template_physio,
+    "Journal_Club":          template_journal_club,
+    "Teaching_Tuesday":      template_peer,
     "Bedside_Infektiologie": template_generic,
-    "NDS_Fallbesprechung":  template_generic,
-    "Trauma_Board":         template_generic,
-    "Therapieplanung":      template_generic,
-    "Fokus_Intensivpflege": template_generic,
+    "NDS_Fallbesprechung":   template_generic,
+    "Trauma_Board":          template_generic,
+    "Therapieplanung":       template_generic,
+    "Fokus_Intensivpflege":  template_generic,
+    "TTE_Curriculum":        template_generic,
+    "Masterclass":           template_generic,
+    "KimSim":                template_generic,
 }
 
 
-def get_email(event_type, person, person_rows, month_label):
+def get_email(event_type, person, person_rows, month_label, firstname=None):
     template_fn = EVENT_TEMPLATES.get(event_type, template_generic)
-    return template_fn(person, person_rows, month_label)
+    return template_fn(person, person_rows, month_label, firstname=firstname)
 
 
-def get_email_for_person(person, person_rows, month_label):
+def get_email_for_person(person, person_rows, month_label, firstname=None):
     """
     Pick the right template based on event type.
-    If a person has multiple different event types in one batch,
-    use the generic template.
-    person is always the first name (salutation).
+    If a person has multiple different event types in one batch, use generic.
+
+    person     — display name e.g. "J. Prazak" or "Julian Lippert" (used for display)
+    firstname  — resolved first name from PEP lookup e.g. "Yoel"; falls back to
+                 _extract_firstname(person) if not provided, or "[FIRST NAME]" if
+                 that also fails to produce a real name.
     """
     event_types = person_rows["event_type"].unique().tolist()
     if len(event_types) == 1:
-        return get_email(event_types[0], person, person_rows, month_label)
-    return template_generic(person, person_rows, month_label)
+        return get_email(event_types[0], person, person_rows, month_label, firstname=firstname)
+    return template_generic(person, person_rows, month_label, firstname=firstname)
