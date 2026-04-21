@@ -1001,39 +1001,13 @@ with tab3:
                 _pending_key = f"_pending_edits_{confirm_month}"
                 if _pending_key not in st.session_state:
                     st.session_state[_pending_key] = {}
-                _pending = st.session_state[_pending_key]
+                # Work on a fresh copy each rerun so writes are visible immediately
+                _pending = dict(st.session_state[_pending_key])
+                _base_sc = st.session_state.get(f"confirm_schedule_{confirm_month}")
 
-                _base_sc   = st.session_state.get(f"confirm_schedule_{confirm_month}")
-                _n_pending = _count_pending(_base_sc, _pending)
-
-                # ── Plan aktualisieren button ─────────────────────────────────
-                _ua_col, _info_col = st.columns([2, 5])
-                with _ua_col:
-                    _update_clicked = st.button(
-                        "Plan aktualisieren",
-                        type="primary" if _n_pending > 0 else "secondary",
-                        disabled=(_n_pending == 0),
-                        key=f"update_plan_{confirm_month}",
-                        use_container_width=True,
-                    )
-                with _info_col:
-                    if _n_pending > 0:
-                        _banner(f"{_n_pending} Änderung(en) ausstehend — «Plan aktualisieren» klicken.", "warn")
-                    else:
-                        _banner("Keine ausstehenden Änderungen.", "info")
-
-                if _update_clicked and _n_pending > 0:
-                    _new_sc = _apply_edits_to_sched(_base_sc, _pending)
-                    st.session_state[f"confirm_schedule_{confirm_month}"] = _new_sc
-                    st.session_state[f"generated_{confirm_month}"]        = _new_sc
-                    st.session_state.pop("schedule_all", None)
-                    st.session_state.pop(f"notify_schedule_{confirm_month}", None)
-                    st.session_state.pop(f"word_file_{confirm_month}", None)
-                    st.session_state[_pending_key] = {}
-                    _banner("Plan aktualisiert.", "ok")
-                    st.rerun()
-
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                # ── nmap cache: maps full option label → clean display name ───
+                # Built during the row loop, used for name resolution
+                _nmap_cache = {}  # key f"{_idx}" or f"{_idx}_0/1" → nmap dict
 
                 # ── Table: Datum + Verantwortlich only ────────────────────────
                 _th1, _th2 = st.columns([1, 2])
@@ -1079,7 +1053,10 @@ with tab3:
                         )
                     with _cr:
                         if _is_jc:
+                            # Build opts — always use _pend_p1 as current (display name, not label)
                             _alts1, _nmap1 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _pend_p1)
+                            _nmap_cache[f"{_idx}_0"] = _nmap1
+                            # Only include alt options where the resolved name != current
                             _opts1 = [_pend_p1] + [o for o in _alts1 if _nmap1.get(o, o) != _pend_p1] + [_OTHER_LABEL]
                             st.markdown("<span style='font-size:10px;color:var(--muted)'>OA / Intermediate</span>", unsafe_allow_html=True)
                             _sel1 = st.selectbox("OA", _opts1, index=0, label_visibility="collapsed",
@@ -1090,9 +1067,11 @@ with tab3:
                                 if _free1.strip():
                                     _pending[f"{_idx}_0"] = _free1.strip()
                             else:
+                                # _nmap1 maps label→display_name; if not found, sel is already display_name
                                 _pending[f"{_idx}_0"] = _nmap1.get(_sel1, _sel1)
 
                             _alts2, _nmap2 = _format_alt_opts(_build_row_alternatives(_row, slot_idx=1), _pend_p2)
+                            _nmap_cache[f"{_idx}_1"] = _nmap2
                             _opts2 = [_pend_p2] + [o for o in _alts2 if _nmap2.get(o, o) != _pend_p2] + [_OTHER_LABEL]
                             st.markdown("<span style='font-size:10px;color:var(--muted)'>AA</span>", unsafe_allow_html=True)
                             _sel2 = st.selectbox("AA", _opts2, index=0, label_visibility="collapsed",
@@ -1106,6 +1085,7 @@ with tab3:
                                 _pending[f"{_idx}_1"] = _nmap2.get(_sel2, _sel2)
                         else:
                             _alts, _nmap = _format_alt_opts(_build_row_alternatives(_row, slot_idx=0), _pend_p1)
+                            _nmap_cache[str(_idx)] = _nmap
                             _opts = [_pend_p1] + [o for o in _alts if _nmap.get(o, o) != _pend_p1] + [_OTHER_LABEL]
                             st.markdown("<span style='font-size:10px;color:var(--muted)'>Verantwortlich</span>", unsafe_allow_html=True)
                             _sel = st.selectbox("Verantwortlich", _opts, index=0, label_visibility="collapsed",
@@ -1120,7 +1100,37 @@ with tab3:
 
                     st.markdown("<div style='height:1px;background:var(--border);opacity:.35;margin:0'></div>", unsafe_allow_html=True)
 
+                # Persist updated pending dict after all rows are processed
                 st.session_state[_pending_key] = _pending
+
+                # ── Plan aktualisieren button — shown AFTER rows so count is current ──
+                _n_pending = _count_pending(_base_sc, _pending)
+                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+                _ua_col, _info_col = st.columns([2, 5])
+                with _ua_col:
+                    _update_clicked = st.button(
+                        "Plan aktualisieren",
+                        type="primary" if _n_pending > 0 else "secondary",
+                        disabled=(_n_pending == 0),
+                        key=f"update_plan_{confirm_month}",
+                        use_container_width=True,
+                    )
+                with _info_col:
+                    if _n_pending > 0:
+                        _banner(f"{_n_pending} Änderung(en) ausstehend.", "warn")
+                    else:
+                        _banner("Keine ausstehenden Änderungen.", "info")
+
+                if _update_clicked and _n_pending > 0:
+                    _new_sc = _apply_edits_to_sched(_base_sc, _pending)
+                    st.session_state[f"confirm_schedule_{confirm_month}"] = _new_sc
+                    st.session_state[f"generated_{confirm_month}"]        = _new_sc
+                    st.session_state.pop("schedule_all", None)
+                    st.session_state.pop(f"notify_schedule_{confirm_month}", None)
+                    st.session_state.pop(f"word_file_{confirm_month}", None)
+                    st.session_state[_pending_key] = {}
+                    _banner("Plan aktualisiert.", "ok")
+                    st.rerun()
 
         if sc is not None:
             st.markdown("<hr>", unsafe_allow_html=True)
