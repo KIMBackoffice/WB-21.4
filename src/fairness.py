@@ -105,6 +105,7 @@ def explode_persons(df):
 # Mittwoch_Curriculum wednesday.py pick_person_fair() INTERMEDIATE
 # -------------------------
 RELEVANT_EVENTS = {
+    "COD_SENIOR",        # tuesday.py — SENIOR role — S-Dienst (823)
     "COD_JUNIOR",        # tuesday.py — AA role — Case of the Day junior
     "PEER",              # tuesday.py — AA role — Peer Teaching session
     "PHYSIO",            # tuesday.py — AA role — Physiologie Talk
@@ -288,8 +289,15 @@ _TAGDIENST_OA       = {101, 119, 165}
 _BUERO_FORSCHUNG_OA = {117, 705}
 _INTERMEDIATE_ROLES = {"SOA", "OA_I", "OA_II", "SFA_II"}
 _AA_ROLES           = {"AA"}
+_SENIOR_ROLES       = {"CA", "SCA", "LA", "SFA_I"}
+_S_DIENST           = {823}
 
 EVENT_DUTY_RULES = {
+    # tuesday.py — SENIOR only, S-Dienst (823)
+    "COD_SENIOR": [
+        (_SENIOR_ROLES, [_S_DIENST]),
+    ],
+
     # tuesday.py / assigner.py — AA only on Tagdienst AA
     "COD_JUNIOR": [
         (_AA_ROLES, [_TAGDIENST_AA]),
