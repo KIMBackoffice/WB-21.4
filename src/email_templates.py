@@ -1,284 +1,125 @@
-# src/email_templates.py
+# src/state.py
+"""
+Single source of truth for session state keys and cache invalidation.
 
-WEEKDAY_DE = {
-    "Monday": "Mo", "Tuesday": "Di", "Wednesday": "Mi",
-    "Thursday": "Do", "Friday": "Fr", "Saturday": "Sa", "Sunday": "So"
-}
+All session state reads/writes go through these helpers so there is one
+place to see what keys exist and what depends on what.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _format_date(date_val):
-    try:
-        wd = WEEKDAY_DE.get(date_val.strftime("%A"), "")
-        return f"{wd} {date_val.day}.{date_val.month}."
-    except Exception:
-        return str(date_val)
-
-
-def _format_time_range(row):
-    """Return e.g. '14:30–15:15' from the time field."""
-    t = str(row.get("time", "")).strip()
-    return t if t else ""
-
-
-# Topics that are just the event name repeated — skip them so the line
-# doesn't say "Mittwoch Curriculum   Mittwochscurriculum"
-_REDUNDANT_TOPICS = {
-    "mittwochscurriculum", "journal club", "peer-teaching session",
-    "peer teaching", "physiologie talk", "case of the day (cod)",
-    "s - case of the day (cod)",
-}
-
-def _clean_topic(topic, event_type=""):
-    """Strip redundant or duplicate topic strings."""
-    topic = str(topic or "").strip()
-    # Strip known event-type prefixes
-    for prefix in [
-        "Mittwochscurriculum:", "Physio Teaching:",
-        "Journal Club", "Peer-Teaching Session", "Peer Teaching",
-        "Case of the Day (COD)", "S - Case of the Day (COD)",
-        "Fokus Intensivpflege:", "EPIC Update:",
-    ]:
-        if topic.startswith(prefix):
-            topic = topic[len(prefix):].strip(" –-:")
-            break
-    # If what remains is just the event name restated, drop it entirely
-    if topic.lower() in _REDUNDANT_TOPICS:
-        return ""
-    return topic
+Key taxonomy
+------------
+  data                    — raw dict of all loaded DataFrames (from Google Sheets)
+  pep_months              — set[int] of months that have PEP data
+  generated_{m}           — final schedule DataFrame for month m (may include edits)
+  has_pep_{m}             — bool, True if month m had real PEP data when generated
+  placeholder_{m}         — sheet-only (no person assignment) schedule for month m
+  confirm_schedule_{m}    — working copy of schedule used in Bestätigung tab
+  pending_edits_{m}       — dict of uncommitted person edits for month m
+  pep_norm                — normalised PEP DataFrame (cached across tabs)
+  schedule_all            — concatenated multi-month schedule used for fairness
+  schedule_all_months     — tuple of months that produced schedule_all (for cache busting)
+  confirmations           — dict[month → dict[reviewer → bool]]
+  finalized_months        — set[int]
+  confirmations_loaded    — bool guard so we only load from GSheet once
+  word_file_{m}           — path to generated Word file for month m
+  notify_schedule_{m}     — schedule used in Benachrichtigung tab for month m
+  _auth_plan              — bool master password gate
+  _auth_analyse           — bool fairness tab password
+  _auth_best              — bool Bestätigung tab password
+  _auth_ben               — bool Benachrichtigung tab password
+  _autoload_done          — bool, set after initial data+schedule load completes
+  _trigger_autoload       — bool, triggers autoload on the next rerun
+"""
+import streamlit as st
 
 
-def _assignment_lines(person_rows):
+# ── Reads ──────────────────────────────────────────────────────────────────
+
+def get_data():
+    return st.session_state.get("data")
+
+def get_pep_months():
+    return st.session_state.get("pep_months", set())
+
+def get_schedule(month: int):
+    """Return the best available schedule for a month (generated > placeholder)."""
+    generated = st.session_state.get(f"generated_{month}")
+    if generated is not None:
+        return generated
+    return st.session_state.get(f"placeholder_{month}")
+
+def get_generated(month: int):
+    return st.session_state.get(f"generated_{month}")
+
+def get_confirm_schedule(month: int):
+    return st.session_state.get(f"confirm_schedule_{month}")
+
+def get_pending_edits(month: int) -> dict:
+    return st.session_state.setdefault(f"pending_edits_{month}", {})
+
+def get_pep_norm():
+    return st.session_state.get("pep_norm")
+
+def get_finalized_months() -> set:
+    return st.session_state.get("finalized_months", set())
+
+def get_confirmations() -> dict:
+    return st.session_state.get("confirmations", {})
+
+def has_pep(month: int) -> bool:
+    return st.session_state.get(f"has_pep_{month}", False)
+
+
+# ── Writes ─────────────────────────────────────────────────────────────────
+
+def set_data(data: dict, pep_months: set):
+    st.session_state["data"]       = data
+    st.session_state["pep_months"] = pep_months
+
+def set_schedule(month: int, sched, has_pep_data: bool):
+    st.session_state[f"generated_{month}"]  = sched
+    st.session_state[f"has_pep_{month}"]    = has_pep_data
+    st.session_state[f"placeholder_{month}"] = sched
+
+def set_confirm_schedule(month: int, sched):
+    st.session_state[f"confirm_schedule_{month}"] = sched
+
+def set_pending_edits(month: int, edits: dict):
+    st.session_state[f"pending_edits_{month}"] = edits
+
+def set_pep_norm(pep_norm):
+    st.session_state["pep_norm"] = pep_norm
+
+def set_confirmations(confs: dict, fins: set):
+    st.session_state["confirmations"]    = confs
+    st.session_state["finalized_months"] = fins
+    st.session_state["confirmations_loaded"] = True
+
+
+# ── Cache invalidation ─────────────────────────────────────────────────────
+
+def invalidate_month(month: int):
     """
-    Build one detail line per row:
-      Mi 1.4.   14:30–15:15   Mittwoch Curriculum   Thema   INO E218
+    Call this after committing person edits for a month.
+    Clears all downstream caches so Plan, Fairness, and Benachrichtigung
+    pick up the updated schedule automatically.
     """
-    lines = []
-    for _, r in person_rows.iterrows():
-        date_str  = _format_date(r["date"])
-        time_str  = _format_time_range(r)
-        evt_str   = str(r.get("event_type", "")).replace("_", " ")
-        topic_str = _clean_topic(r.get("topic", ""), r.get("event_type", ""))
-        room_str  = str(r.get("room", "") or "").strip()
+    # Fairness multi-month schedule
+    st.session_state.pop("schedule_all",        None)
+    st.session_state.pop("schedule_all_months", None)
+    # Notification tab cached schedule
+    st.session_state.pop(f"notify_schedule_{month}", None)
+    # Word export (must be regenerated with new responsible names)
+    st.session_state.pop(f"word_file_{month}",  None)
+    # Pending edits cleared by caller after applying
 
-        parts = [p for p in [date_str, time_str, evt_str, topic_str, room_str] if p]
-        lines.append("   ".join(parts))
-    return "\n".join(lines)
-
-
-def _extract_firstname(person: str) -> str:
-    """
-    Extract the best available firstname for salutation.
-
-    Handles:
-      "Julian Lippert"           → "Julian"
-      "Anna Messmer"             → "Anna"
-      "Marie-Noelle Kronig"      → "Marie-Noelle"
-      "J. Prazak"                → "J."   (initial only — no full name available)
-      "Y.A. Que"                 → "Y.A." (double initial)
-      "N. Annen"                 → "N."
-    If the name is initial-format we return the initial so Nadja can correct
-    the draft — better than guessing wrong.
-    """
-    name = person.strip()
-    parts = name.split()
-    if not parts:
-        return name
-
-    first = parts[0]
-    # Looks like an initial: "J.", "Y.A.", "M.-E.", "H.P."
-    if "." in first:
-        return first  # return as-is, e.g. "J."
-
-    # Full first name — may be hyphenated like "Marie-Noelle"
-    return first.capitalize()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TEMPLATES
-# ─────────────────────────────────────────────────────────────────────────────
-
-def template_mittwoch(person, person_rows, month_label, firstname=None):
-    if not firstname or firstname == "[FIRST NAME]":
-        firstname = _extract_firstname(person)
-    subject   = f"Mittwochscurriculum {month_label} – Einteilung"
-    lines     = _assignment_lines(person_rows)
-    body = f"""Liebe/r {firstname}
-
-Hier die Einteilung fürs Mittwochscurriculum {month_label}:
-
-{lines}
-
-Das Mittwochscurriculum findet jeweils mittwochs von 14:30–15:15 Uhr im INO E218 statt.
-
-Falls du zu deinem Thema Fragen hast oder es anpassen möchtest, melde dich gerne bei mir.
-
-Ganz herzlichen Dank und liebe Grüsse
-nadja"""
-    return subject, body
-
-
-def template_peer(person, person_rows, month_label, firstname=None):
-    if not firstname or firstname == "[FIRST NAME]":
-        firstname = _extract_firstname(person)
-    subject   = f"Peer-Teaching Session {month_label} – Anfrage/Einteilung"
-    lines     = _assignment_lines(person_rows)
-    body = f"""Liebe/r {firstname}
-
-Gerne möchte ich Dich für die Peer-Teaching Session einteilen/anfragen:
-
-{lines}
-
-Diese Weiterbildung findet jeweils jeden 2. Dienstag nach dem Röntgenrapport statt und soll ca. 15 Minuten dauern.
-
-Es geht darum dass du etwas Spannendes aus deinem eigenen Fachgebiet präsentierst das eine gewisse Überschneidung mit der Intensivmedizin hat oder für Intensivmediziner spannend oder relevant ist.
-
-Falls du keine Idee hast kannst du dich bei mir melden dann suchen wir zusammen ein Thema oder einen Fall; oder du kannst alternativ einen Physiologie-Talk halten (hierfür kann ich Dir ein Grundlagenpaper zur Verfügung stellen).
-
-Ganz lieber Gruss und merci!
-nadja"""
-    return subject, body
-
-
-def template_physio(person, person_rows, month_label, firstname=None):
-    if not firstname or firstname == "[FIRST NAME]":
-        firstname = _extract_firstname(person)
-    subject   = f"Physiologie-Talk {month_label} – Anfrage/Einteilung"
-    lines     = _assignment_lines(person_rows)
-    body = f"""Liebe/r {firstname}
-
-Gerne möchte ich Dich für den Physiologie-Talk einteilen/anfragen:
-
-{lines}
-
-Er findet jeweils jeden 2. Dienstag nach dem Röntgenrapport statt und soll ca. 15 Minuten dauern.
-
-Falls du keine Idee hast kannst du dich bei mir melden dann suchen wir zusammen ein Thema oder einen Fall; oder du kannst alternativ einen anderen Vortrag halten (hierfür kann ich Dir ein Grundlagenpaper zur Verfügung stellen).
-
-Melde dich ungeniert, falls du Fragen hast – dann schauen wir's zusammen an.
-
-Ganz lieber Gruss und merci!
-nadja"""
-    return subject, body
-
-
-def template_cod(person, person_rows, month_label, firstname=None):
-    if not firstname or firstname == "[FIRST NAME]":
-        firstname = _extract_firstname(person)
-    subject   = f"Case of the Day {month_label} – Anfrage/Einteilung"
-    lines     = _assignment_lines(person_rows)
-    body = f"""Liebe/r {firstname}
-
-Gerne möchte ich Dich für den Case of the Day einteilen/anfragen:
-
-{lines}
-
-Ihr könnt einen Fall aus der näheren Vergangenheit präsentieren der spannend oder eine Herausforderung war und das Therapiekonzept nochmals genauer beleuchten – mit Hilfe des anwesenden BL und des Auditoriums.
-Oder auch einen älteren Fall vorstellen der Euch in Erinnerung geblieben ist und anhand dessen Ihr Euren Peers ein bestimmtes Lernziel weitergeben könnt.
-
-Gewünscht ist eine möglichst interaktive Gestaltung.
-Und es sollen nicht unbedingt nur Präsentationen von «Kolibris» sein, sondern gerne auch von Fällen mit alltäglicher klinischer Relevanz.
-
-Meldet Euch bei Fragen gerne bei mir.
-Ganz herzlichen Dank für Eure Unterstützung
-nadja"""
-    return subject, body
-
-
-def template_journal_club(person, person_rows, month_label, firstname=None, jc_role="aa"):
-    if not firstname or firstname == "[FIRST NAME]":
-        firstname = _extract_firstname(person)
-    subject   = f"Journal Club {month_label} – Anfrage/Einteilung"
-    lines     = _assignment_lines(person_rows)
-    if jc_role == "oa":
-        _role_line = (
-            "Als Oberarzt/Oberärztin leitest du den Journal Club und unterstützt "
-            "die Assistenzärztin / den Assistenzarzt bei der kritischen Beurteilung des Papers."
+def invalidate_all():
+    """Full reset — called on fresh data load."""
+    keys_to_clear = [k for k in st.session_state if any(
+        k.startswith(p) for p in (
+            "generated_", "has_pep_", "placeholder_", "confirm_schedule_",
+            "pending_edits_", "notify_schedule_", "word_file_",
+            "schedule_all", "pep_norm",
         )
-    else:
-        _role_line = (
-            "Bitte führe die Literaturrecherche selbständig durch \u2014 "
-            "dein:e Oberarzt/Oberärztin unterstützt dich bei Bedarf."
-        )
-    body = f"""Liebe/r {firstname}
-
-Ich möchte Dich gerne für den Journal Club {month_label} anfragen/einteilen.
-
-{lines}
-
-Die Lernziele sind:
-
-• Basics der Literaturrecherche kennenlernen
-• Kritische Beurteilung eines wissenschaftlichen Artikels
-• Beurteilung der Relevanz für die klinische Arbeit
-• Verbesserung statistischer Kenntnisse
-
-{_role_line}
-Es sollte ein grosses intensivmedizinisches Journal sein oder ein anderes grosses Journal mit intensivmedizinischem Thema (Bsp. NEJM, JAMA oä.). Das Paper sollte nicht älter als 12 Monate sein. Bitte keine Reviews oder Case reports auswählen.
-Für statistische und methodologische Fragen ist während des Journal Club ein Leitender Arzt anwesend.
-
-Bitte verschicke den Artikel (via KIM-Administration) genügend früh an die KIM-Ärzt:innen damit sie sich vorbereiten und einbringen können.
-Die schon vorgestellten Artikel findest du unter dem Laufwerk L:\\KIM\\Ärzte\\Weiterbildung\\Journal Club
-
-Ganz herzlichen Dank und liebe Grüsse!
-nadja"""
-    return subject, body
-
-
-def template_generic(person, person_rows, month_label, firstname=None):
-    if not firstname or firstname == "[FIRST NAME]":
-        firstname = _extract_firstname(person)
-    subject   = f"Weiterbildung {month_label} – Einteilung"
-    lines     = _assignment_lines(person_rows)
-    body = f"""Liebe/r {firstname}
-
-Hier die Einteilung für {month_label}:
-
-{lines}
-
-[Placeholder]
-
-Ganz herzlichen Dank und liebe Grüsse
-nadja"""
-    return subject, body
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ROUTING
-# ─────────────────────────────────────────────────────────────────────────────
-
-EVENT_TEMPLATES = {
-    "Mittwoch_Curriculum":   template_mittwoch,
-    "PEER":                  template_peer,
-    "COD_JUNIOR":            template_cod,
-    "COD_SENIOR":            template_cod,
-    "PHYSIO":                template_physio,
-    "Journal_Club":          template_journal_club,
-    "Teaching_Tuesday":      template_peer,
-    "Bedside_Infektiologie": template_generic,
-    "NDS_Fallbesprechung":   template_generic,
-    "Trauma_Board":          template_generic,
-    "Therapieplanung":       template_generic,
-    "Fokus_Intensivpflege":  template_generic,
-    "TTE_Curriculum":        template_generic,
-    "Masterclass":           template_generic,
-    "KimSim":                template_generic,
-}
-
-
-def get_email(event_type, person, person_rows, month_label, firstname=None, jc_role="aa"):
-    template_fn = EVENT_TEMPLATES.get(event_type, template_generic)
-    if event_type == "Journal_Club":
-        return template_fn(person, person_rows, month_label, firstname=firstname, jc_role=jc_role)
-    return template_fn(person, person_rows, month_label, firstname=firstname)
-
-
-def get_email_for_person(person, person_rows, month_label, firstname=None, jc_role="aa"):
-    """jc_role: 'oa' for OA/Intermediate slot (person 1), 'aa' for AA slot (person 2)."""
-    event_types = person_rows["event_type"].unique().tolist()
-    if len(event_types) == 1:
-        return get_email(event_types[0], person, person_rows, month_label,
-                         firstname=firstname, jc_role=jc_role)
-    return template_generic(person, person_rows, month_label, firstname=firstname)
+    )]
+    for k in keys_to_clear:
+        st.session_state.pop(k, None)
