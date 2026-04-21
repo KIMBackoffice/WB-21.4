@@ -1420,29 +1420,53 @@ with tab4:
 
             month_label = f"{MONTH_NAMES_DE[notify_month]} 2026"
 
-            # ── Build firstname lookup from PEP ───────────────────────────────
-            # PEP has first_name column. Build two keys per person:
-            #   lastname alone     → e.g. "annen"   → "Nadja"
-            #   initial.lastname   → e.g. "n. annen" → "Nadja"  (post-format_people key)
-            # This handles both PEP-assigned (initial format) and sheet-based names.
-            _pep_fn_lookup: dict = {}
+            # ── Build firstname lookup ────────────────────────────────────────
+            # Two sources:
+            # 1. PEP sheet: has explicit first_name column (lastname firstname format)
+            # 2. All other sheets: responsible column has "Vorname Nachname" (full names)
+            #    — these are the original names before format_people() abbreviates them
+            # Result: lowercase_lastname → Firstname (capitalized)
+            _fn_lookup: dict = {}
+
+            # Source 1: PEP (name_clean = "lastname firstname", first_name column explicit)
             _pep_raw_ben = data.get("pep")
             if _pep_raw_ben is not None and not _pep_raw_ben.empty:
                 for _, _pr in _pep_raw_ben.drop_duplicates("name_clean").iterrows():
-                    _nc  = str(_pr.get("name_clean", "") or "").strip().lower()
-                    _fn  = str(_pr.get("first_name", "") or "").strip().capitalize()
+                    _nc = str(_pr.get("name_clean", "") or "").strip().lower()
+                    _fn = str(_pr.get("first_name", "") or "").strip()
                     if not _nc or not _fn:
                         continue
-                    # key 1: lastname (first non-initial token in name_clean)
-                    _ln = _extract_lastname(_nc)
-                    if _ln:
-                        _pep_fn_lookup[_ln] = _fn
-                    # key 2: "F. Lastname" format (what format_people produces)
-                    # name_clean is "lastname firstname", so reconstruct "F. Lastname"
                     _nc_parts = _nc.split()
-                    if len(_nc_parts) >= 2:
-                        _init_key = f"{_nc_parts[-1][0].upper()}. {_nc_parts[0].capitalize()}"
-                        _pep_fn_lookup[_init_key] = _fn
+                    if _nc_parts:
+                        _fn_lookup[_nc_parts[0]] = _fn.capitalize()
+
+            # Source 2: all sheet DataFrames — scan every responsible-like column
+            # for full "Vorname Nachname" entries (2+ tokens, no dots = full name)
+            import re as _re
+            _RESP_COLS = [
+                "veranwortlich (vorname nachname)",
+                "verantwortlich (vorname nachname)",
+                "veranwortlich - pflege (vorname nachname)",
+                "veranwortlich - aerzte (vorname nachname)",
+                "responsible",
+            ]
+            for _sheet_df in data.values():
+                if _sheet_df is None or not hasattr(_sheet_df, "columns"):
+                    continue
+                _col = next((c for c in _sheet_df.columns if c.lower() in _RESP_COLS), None)
+                if _col is None:
+                    continue
+                for _raw in _sheet_df[_col].dropna().unique():
+                    # Split on "/" for multi-person entries like "Anna Messmer / Marie-Noelle Kronig"
+                    for _name in str(_raw).split("/"):
+                        _name = _name.strip()
+                        _parts = _name.split()
+                        # Full name = 2+ tokens, first token has no dot (not already abbreviated)
+                        if len(_parts) >= 2 and "." not in _parts[0]:
+                            _firstname = _parts[0].capitalize()
+                            _lastname  = _parts[-1].lower()
+                            if _lastname and _firstname:
+                                _fn_lookup[_lastname] = _firstname
 
             # ── Non-person entries to skip ────────────────────────────────────
             _NON_PERSONS = {"fallführende ärzteschaft", "fallführende aerzteschaft"}
@@ -1463,19 +1487,27 @@ with tab4:
                     if name and name != "— TBD —" and name.lower() not in _NON_PERSONS:
                         individual_rows.setdefault(name, []).append(row)
 
+            # For Journal Club: detect OA (slot 0) vs AA (slot 1) from position in "P1 / P2"
+            _jc_role_map: dict = {}
+            for _, _jcrow in selected_orig.iterrows():
+                if str(_jcrow.get("event_type", "")) == "Journal_Club":
+                    _slots = [n.strip() for n in str(_jcrow.get("responsible", "") or "").split("/")]
+                    for _si, _sn in enumerate(_slots):
+                        if _sn and _sn != "— TBD —":
+                            _jc_role_map[_sn] = "oa" if _si == 0 else "aa"
+
             import pandas as _pd_mail
             for person, rows in individual_rows.items():
-                # Resolve firstname: try exact match, then lastname-only match
-                _person_key = person.strip()
-                _person_fn  = (
-                    _pep_fn_lookup.get(_person_key)          # "N. Annen" exact
-                    or _pep_fn_lookup.get(_extract_lastname(person.lower().strip()))  # "annen"
-                    or None
-                )
+                # lastname = last token of display name ("M.E. Jaquier" → "jaquier")
+                _person_parts = person.strip().split()
+                _person_ln    = _person_parts[-1].lower() if _person_parts else ""
+                _person_fn    = _fn_lookup.get(_person_ln) or None
+                _jc_role      = _jc_role_map.get(person, "aa")
                 person_rows_orig = _pd_mail.DataFrame(rows)
                 subject, body = get_email_for_person(
                     person=person,
-                    firstname=_person_fn,  # None → template uses _extract_firstname fallback
+                    firstname=_person_fn,
+                    jc_role=_jc_role,
                     person_rows=person_rows_orig,
                     month_label=month_label,
                 )
